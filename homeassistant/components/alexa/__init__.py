@@ -96,8 +96,8 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Activate the Alexa component."""
-    if DOMAIN not in config:
-        return True
+    if DOMAIN in config:
+        return False
 
     config = config[DOMAIN]
 
