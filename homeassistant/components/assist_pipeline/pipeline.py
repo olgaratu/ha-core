@@ -222,7 +222,7 @@ def _async_resolve_default_pipeline_settings(
 
 async def _async_create_default_pipeline(
     hass: HomeAssistant, pipeline_store: PipelineStorageCollection
-) -> Pipeline:
+) -> Any:
     """Create a default pipeline.
 
     The default pipeline will use the homeassistant conversation agent and the
@@ -239,7 +239,7 @@ async def async_create_default_pipeline(
     stt_engine_id: str,
     tts_engine_id: str,
     pipeline_name: str,
-) -> Pipeline | None:
+) -> Any:
     """Create a pipeline with default settings.
 
     The default pipeline will use the homeassistant conversation agent and the
@@ -264,7 +264,7 @@ async def async_create_default_pipeline(
 @callback
 def _async_get_pipeline_from_conversation_entity(
     hass: HomeAssistant, entity_id: str
-) -> Pipeline:
+) -> Any:
     """Get a pipeline by conversation entity ID."""
     entity = hass.states.get(entity_id)
     settings = _async_resolve_default_pipeline_settings(
@@ -278,7 +278,7 @@ def _async_get_pipeline_from_conversation_entity(
 
 
 @callback
-def async_get_pipeline(hass: HomeAssistant, pipeline_id: str | None = None) -> Pipeline:
+def async_get_pipeline(hass: HomeAssistant, pipeline_id: str | None = None) -> Any:
     """Get a pipeline by id or the preferred pipeline."""
     pipeline_data: PipelineData = hass.data[DOMAIN]
 
@@ -381,7 +381,7 @@ class PipelineEvent:
     timestamp: str = field(default_factory=lambda: dt_util.utcnow().isoformat())
 
 
-type PipelineEventCallback = Callable[[PipelineEvent], None]
+type PipelineEventCallback = Callable[[PipelineEvent], None]  # type: ignore[valid-type]
 
 
 @dataclass(frozen=True)
@@ -838,7 +838,7 @@ class PipelineRun:
         # pipeline.stt_engine can't be None or this function is not called
         stt_provider = stt.async_get_speech_to_text_engine(
             self.hass,
-            self.pipeline.stt_engine,  # type: ignore[arg-type]
+            self.pipeline.stt_engine,
         )
 
         if stt_provider is None:
@@ -1453,11 +1453,21 @@ class PipelineInput:
 
     def _validate_start_and_end_stages(self) -> None:
         """Help to validate the start and end stages."""
-        if self.run.start_stage in (PipelineStage.WAKE_WORD, PipelineStage.STT):
-            if self.run.pipeline.stt_engine is None:
+        # Validate start stages
+        start_stage_errors = {
+            PipelineStage.WAKE_WORD: self.run.pipeline.stt_engine is None,
+            PipelineStage.STT: self.run.pipeline.stt_engine is None,
+            PipelineStage.INTENT: self.intent_input is None,
+            PipelineStage.TTS: self.tts_input is None,
+        }
+
+        for stage, error_condition in start_stage_errors.items():
+            if self.run.start_stage == stage and error_condition:
                 raise PipelineRunValidationError(
-                    "the pipeline does not support speech-to-text"
+                    f"{stage.lower()} is required for {stage.name.lower().replace('_', ' ')}"
                 )
+        # Additional validation for speech-to-text stages
+        if self.run.start_stage in (PipelineStage.WAKE_WORD, PipelineStage.STT):
             if self.stt_metadata is None:
                 raise PipelineRunValidationError(
                     "stt_metadata is required for speech-to-text"
@@ -1466,21 +1476,14 @@ class PipelineInput:
                 raise PipelineRunValidationError(
                     "stt_stream is required for speech-to-text"
                 )
-        elif self.run.start_stage == PipelineStage.INTENT:
-            if self.intent_input is None:
-                raise PipelineRunValidationError(
-                    "intent_input is required for intent recognition"
-                )
-        elif self.run.start_stage == PipelineStage.TTS:
-            if self.tts_input is None:
-                raise PipelineRunValidationError(
-                    "tts_input is required for text-to-speech"
-                )
-        if self.run.end_stage == PipelineStage.TTS:
-            if self.run.pipeline.tts_engine is None:
-                raise PipelineRunValidationError(
-                    "the pipeline does not support text-to-speech"
-                )
+        # Validate end stage
+        if (
+            self.run.end_stage == PipelineStage.TTS
+            and self.run.pipeline.tts_engine is None
+        ):
+            raise PipelineRunValidationError(
+                "the pipeline does not support text-to-speech"
+            )
 
     def _prepare_pipeline_tasks(
         self, start_stage_index: int, end_stage_index: int
@@ -1518,74 +1521,6 @@ class PipelineInput:
 
         return prepare_tasks
 
-    # async def validate(self) -> None:
-    #     """Validate pipeline input against start stage."""
-    #     if self.run.start_stage in (PipelineStage.WAKE_WORD, PipelineStage.STT):
-    #         if self.run.pipeline.stt_engine is None:
-    #             raise PipelineRunValidationError(
-    #                 "the pipeline does not support speech-to-text"
-    #             )
-    #         if self.stt_metadata is None:
-    #             raise PipelineRunValidationError(
-    #                 "stt_metadata is required for speech-to-text"
-    #             )
-    #         if self.stt_stream is None:
-    #             raise PipelineRunValidationError(
-    #                 "stt_stream is required for speech-to-text"
-    #             )
-    #     elif self.run.start_stage == PipelineStage.INTENT:
-    #         if self.intent_input is None:
-    #             raise PipelineRunValidationError(
-    #                 "intent_input is required for intent recognition"
-    #             )
-    #     elif self.run.start_stage == PipelineStage.TTS:
-    #         if self.tts_input is None:
-    #             raise PipelineRunValidationError(
-    #                 "tts_input is required for text-to-speech"
-    #             )
-    #     if self.run.end_stage == PipelineStage.TTS:
-    #         if self.run.pipeline.tts_engine is None:
-    #             raise PipelineRunValidationError(
-    #                 "the pipeline does not support text-to-speech"
-    #             )
-
-    #     start_stage_index = PIPELINE_STAGE_ORDER.index(self.run.start_stage)
-    #     end_stage_index = PIPELINE_STAGE_ORDER.index(self.run.end_stage)
-
-    #     prepare_tasks = []
-
-    #     if (
-    #         start_stage_index
-    #         <= PIPELINE_STAGE_ORDER.index(PipelineStage.WAKE_WORD)
-    #         <= end_stage_index
-    #     ):
-    #         prepare_tasks.append(self.run.prepare_wake_word_detection())
-
-    #     if (
-    #         start_stage_index
-    #         <= PIPELINE_STAGE_ORDER.index(PipelineStage.STT)
-    #         <= end_stage_index
-    #     ):
-    #         # self.stt_metadata can't be None or we'd raise above
-    #         prepare_tasks.append(self.run.prepare_speech_to_text(self.stt_metadata))  # type: ignore[arg-type]
-
-    #     if (
-    #         start_stage_index
-    #         <= PIPELINE_STAGE_ORDER.index(PipelineStage.INTENT)
-    #         <= end_stage_index
-    #     ):
-    #         prepare_tasks.append(self.run.prepare_recognize_intent())
-
-    #     if (
-    #         start_stage_index
-    #         <= PIPELINE_STAGE_ORDER.index(PipelineStage.TTS)
-    #         <= end_stage_index
-    #     ):
-    #         prepare_tasks.append(self.run.prepare_text_to_speech())
-
-    #     if prepare_tasks:
-    #         await asyncio.gather(*prepare_tasks)
-
 
 class PipelinePreferred(CollectionError):
     """Raised when attempting to delete the preferred pipelen."""
@@ -1602,14 +1537,12 @@ class SerializedPipelineStorageCollection(SerializedStorageCollection):
     preferred_item: str
 
 
-class PipelineStorageCollection(
-    StorageCollection[Pipeline, SerializedPipelineStorageCollection]
-):
+class PipelineStorageCollection(StorageCollection):
     """Pipeline storage collection."""
 
     _preferred_item: str
 
-    async def _async_load_data(self) -> SerializedPipelineStorageCollection | None:
+    async def _async_load_data(self) -> Any:
         """Load the data."""
         if not (data := await super()._async_load_data()):
             pipeline = await _async_create_default_pipeline(self.hass, self)
@@ -1676,9 +1609,7 @@ class PipelineStorageCollection(
         }
 
 
-class PipelineStorageCollectionWebsocket(
-    StorageCollectionWebsocket[PipelineStorageCollection]
-):
+class PipelineStorageCollectionWebsocket(StorageCollectionWebsocket):
     """Class to expose storage collection management over websocket."""
 
     @callback
@@ -1835,7 +1766,7 @@ class PipelineData:
     def __init__(self, pipeline_store: PipelineStorageCollection) -> None:
         """Initialize."""
         self.pipeline_store = pipeline_store
-        self.pipeline_debug: dict[str, LimitedSizeDict[str, PipelineRunDebug]] = {}
+        self.pipeline_debug: dict[str, LimitedSizeDict] = {}
         self.pipeline_devices: dict[str, AssistDevice] = {}
         self.pipeline_runs = PipelineRuns(pipeline_store)
         self.device_audio_queues: dict[str, DeviceAudioQueue] = {}
@@ -1852,7 +1783,7 @@ class PipelineRunDebug:
     )
 
 
-class PipelineStore(Store[SerializedPipelineStorageCollection]):
+class PipelineStore(Store):
     """Store entity registry data."""
 
     async def _async_migrate_func(
