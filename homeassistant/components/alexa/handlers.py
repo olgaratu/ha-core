@@ -66,7 +66,6 @@ from .const import (
     API_THERMOSTAT_MODES_CUSTOM,
     API_THERMOSTAT_PRESETS,
     DATE_FORMAT,
-    PRESET_MODE_NA,
     Cause,
     Inputs,
 )
@@ -174,37 +173,9 @@ async def async_api_turn_on(
 ) -> AlexaResponse:
     """Process a turn on request."""
     entity = directive.entity
-    if (domain := entity.domain) == group.DOMAIN:
-        domain = ha.DOMAIN
+    domain = _get_domain(entity)
 
-    service = SERVICE_TURN_ON
-    if domain == cover.DOMAIN:
-        service = cover.SERVICE_OPEN_COVER
-    elif domain == climate.DOMAIN:
-        service = climate.SERVICE_TURN_ON
-    elif domain == fan.DOMAIN:
-        service = fan.SERVICE_TURN_ON
-    elif domain == humidifier.DOMAIN:
-        service = humidifier.SERVICE_TURN_ON
-    elif domain == remote.DOMAIN:
-        service = remote.SERVICE_TURN_ON
-    elif domain == vacuum.DOMAIN:
-        supported = entity.attributes.get(ATTR_SUPPORTED_FEATURES, 0)
-        if (
-            not supported & vacuum.VacuumEntityFeature.TURN_ON
-            and supported & vacuum.VacuumEntityFeature.START
-        ):
-            service = vacuum.SERVICE_START
-    elif domain == timer.DOMAIN:
-        service = timer.SERVICE_START
-    elif domain == media_player.DOMAIN:
-        supported = entity.attributes.get(ATTR_SUPPORTED_FEATURES, 0)
-        power_features = (
-            media_player.MediaPlayerEntityFeature.TURN_ON
-            | media_player.MediaPlayerEntityFeature.TURN_OFF
-        )
-        if not supported & power_features:
-            service = media_player.SERVICE_MEDIA_PLAY
+    service = await _get_service_for_turn_on(hass, entity, domain)
 
     await hass.services.async_call(
         domain,
@@ -215,6 +186,59 @@ async def async_api_turn_on(
     )
 
     return directive.response()
+
+
+def _get_domain(entity: ha.State) -> str:
+    """Return the appropriate domain for the entity."""
+    if entity.domain == group.DOMAIN:
+        return ha.DOMAIN
+    return entity.domain
+
+
+async def _get_service_for_turn_on(
+    hass: ha.HomeAssistant, entity: ha.State, domain: str
+) -> str:
+    """Return the appropriate service to call for turning on an entity."""
+    if domain == cover.DOMAIN:
+        return cover.SERVICE_OPEN_COVER
+    if domain == climate.DOMAIN:
+        return climate.SERVICE_TURN_ON
+    if domain == fan.DOMAIN:
+        return fan.SERVICE_TURN_ON
+    if domain == humidifier.DOMAIN:
+        return humidifier.SERVICE_TURN_ON
+    if domain == remote.DOMAIN:
+        return remote.SERVICE_TURN_ON
+    if domain == vacuum.DOMAIN:
+        return await _get_vacuum_service(entity)
+    if domain == timer.DOMAIN:
+        return timer.SERVICE_START
+    if domain == media_player.DOMAIN:
+        return await _get_media_player_service(entity)
+    return SERVICE_TURN_ON
+
+
+async def _get_vacuum_service(entity: ha.State) -> str:
+    """Determine the appropriate vacuum service to call based on supported features."""
+    supported = entity.attributes.get(ATTR_SUPPORTED_FEATURES, 0)
+    if (
+        not supported & vacuum.VacuumEntityFeature.TURN_ON
+        and supported & vacuum.VacuumEntityFeature.START
+    ):
+        return vacuum.SERVICE_START
+    return vacuum.SERVICE_TURN_ON
+
+
+async def _get_media_player_service(entity: ha.State) -> str:
+    """Determine the appropriate media player service to call."""
+    supported = entity.attributes.get(ATTR_SUPPORTED_FEATURES, 0)
+    power_features = (
+        media_player.MediaPlayerEntityFeature.TURN_ON
+        | media_player.MediaPlayerEntityFeature.TURN_OFF
+    )
+    if not supported & power_features:
+        return media_player.SERVICE_MEDIA_PLAY
+    return SERVICE_TURN_ON
 
 
 @HANDLERS.register(("Alexa.PowerController", "TurnOff"))
@@ -1168,90 +1192,12 @@ async def async_api_set_mode(
     entity = directive.entity
     instance = directive.instance
     domain = entity.domain
-    service = None
     data: dict[str, Any] = {ATTR_ENTITY_ID: entity.entity_id}
     mode = directive.payload["mode"]
+    if instance is None:
+        raise ValueError("Instance cannot be None")
 
-    # Fan Direction
-    if instance == f"{fan.DOMAIN}.{fan.ATTR_DIRECTION}":
-        direction = mode.split(".")[1]
-        if direction in (fan.DIRECTION_REVERSE, fan.DIRECTION_FORWARD):
-            service = fan.SERVICE_SET_DIRECTION
-            data[fan.ATTR_DIRECTION] = direction
-
-    # Fan preset_mode
-    elif instance == f"{fan.DOMAIN}.{fan.ATTR_PRESET_MODE}":
-        preset_mode = mode.split(".")[1]
-        preset_modes: list[str] | None = entity.attributes.get(fan.ATTR_PRESET_MODES)
-        if (
-            preset_mode != PRESET_MODE_NA
-            and preset_modes
-            and preset_mode in preset_modes
-        ):
-            service = fan.SERVICE_SET_PRESET_MODE
-            data[fan.ATTR_PRESET_MODE] = preset_mode
-        else:
-            msg = f"Entity '{entity.entity_id}' does not support Preset '{preset_mode}'"
-            raise AlexaInvalidValueError(msg)
-
-    # Humidifier mode
-    elif instance == f"{humidifier.DOMAIN}.{humidifier.ATTR_MODE}":
-        mode = mode.split(".")[1]
-        modes: list[str] | None = entity.attributes.get(humidifier.ATTR_AVAILABLE_MODES)
-        if mode != PRESET_MODE_NA and modes and mode in modes:
-            service = humidifier.SERVICE_SET_MODE
-            data[humidifier.ATTR_MODE] = mode
-        else:
-            msg = f"Entity '{entity.entity_id}' does not support Mode '{mode}'"
-            raise AlexaInvalidValueError(msg)
-
-    # Remote Activity
-    elif instance == f"{remote.DOMAIN}.{remote.ATTR_ACTIVITY}":
-        activity = mode.split(".")[1]
-        activities: list[str] | None = entity.attributes.get(remote.ATTR_ACTIVITY_LIST)
-        if activity != PRESET_MODE_NA and activities and activity in activities:
-            service = remote.SERVICE_TURN_ON
-            data[remote.ATTR_ACTIVITY] = activity
-        else:
-            msg = f"Entity '{entity.entity_id}' does not support Mode '{mode}'"
-            raise AlexaInvalidValueError(msg)
-
-    # Water heater operation mode
-    elif instance == f"{water_heater.DOMAIN}.{water_heater.ATTR_OPERATION_MODE}":
-        operation_mode = mode.split(".")[1]
-        operation_modes: list[str] | None = entity.attributes.get(
-            water_heater.ATTR_OPERATION_LIST
-        )
-        if (
-            operation_mode != PRESET_MODE_NA
-            and operation_modes
-            and operation_mode in operation_modes
-        ):
-            service = water_heater.SERVICE_SET_OPERATION_MODE
-            data[water_heater.ATTR_OPERATION_MODE] = operation_mode
-        else:
-            msg = f"Entity '{entity.entity_id}' does not support Operation mode '{operation_mode}'"
-            raise AlexaInvalidValueError(msg)
-
-    # Cover Position
-    elif instance == f"{cover.DOMAIN}.{cover.ATTR_POSITION}":
-        position = mode.split(".")[1]
-
-        if position == cover.STATE_CLOSED:
-            service = cover.SERVICE_CLOSE_COVER
-        elif position == cover.STATE_OPEN:
-            service = cover.SERVICE_OPEN_COVER
-        elif position == "custom":
-            service = cover.SERVICE_STOP_COVER
-
-    # Valve position state
-    elif instance == f"{valve.DOMAIN}.state":
-        position = mode.split(".")[1]
-
-        if position == valve.STATE_CLOSED:
-            service = valve.SERVICE_CLOSE_VALVE
-        elif position == valve.STATE_OPEN:
-            service = valve.SERVICE_OPEN_VALVE
+    service, data = determine_service_and_data(entity, instance, mode, data)
 
     if not service:
         raise AlexaInvalidDirectiveError(DIRECTIVE_NOT_SUPPORTED)
@@ -1271,6 +1217,108 @@ async def async_api_set_mode(
     )
 
     return response
+
+
+def determine_service_and_data(
+    entity: ha.State, instance: str, mode: str, data: dict[str, Any]
+) -> tuple[Any, dict[str, Any]]:
+    """Determine the appropriate service and data for the given entity, instance, and mode."""
+    # Ensure mode is in the correct format and can be split
+    if not isinstance(mode, str) or "." not in mode:
+        raise ValueError(f"Invalid mode format: {mode}")
+    # Safely split the mode
+    mode_split = mode.split(".")[1] if mode and "." in mode else None
+    if not mode_split:
+        raise ValueError(f"Unable to split mode: {mode}")
+
+    domain_instance_mapping = {
+        fan.DOMAIN: {
+            fan.ATTR_DIRECTION: (
+                fan.SERVICE_SET_DIRECTION,
+                fan.ATTR_DIRECTION,
+                [fan.DIRECTION_REVERSE, fan.DIRECTION_FORWARD],
+            ),
+            fan.ATTR_PRESET_MODE: (
+                fan.SERVICE_SET_PRESET_MODE,
+                fan.ATTR_PRESET_MODE,
+                entity.attributes.get(fan.ATTR_PRESET_MODES) or [],
+            ),
+        },
+        humidifier.DOMAIN: {
+            humidifier.ATTR_MODE: (
+                humidifier.SERVICE_SET_MODE,
+                humidifier.ATTR_MODE,
+                entity.attributes.get(humidifier.ATTR_AVAILABLE_MODES) or [],
+            ),
+        },
+        remote.DOMAIN: {
+            remote.ATTR_ACTIVITY: (
+                remote.SERVICE_TURN_ON,
+                remote.ATTR_ACTIVITY,
+                entity.attributes.get(remote.ATTR_ACTIVITY_LIST) or [],
+            ),
+        },
+        water_heater.DOMAIN: {
+            water_heater.ATTR_OPERATION_MODE: (
+                water_heater.SERVICE_SET_OPERATION_MODE,
+                water_heater.ATTR_OPERATION_MODE,
+                entity.attributes.get(water_heater.ATTR_OPERATION_LIST) or [],
+            ),
+        },
+        cover.DOMAIN: {
+            cover.ATTR_POSITION: determine_cover_service(mode_split),
+        },
+        valve.DOMAIN: {
+            "state": determine_valve_service(mode_split),
+        },
+    }
+
+    # Ensure that the entity domain is valid and the instance exists in the mapping
+    domain_mapping = domain_instance_mapping.get(entity.domain)
+    if domain_mapping is None:
+        raise ValueError(f"Domain '{entity.domain}' is not supported")
+
+    service_data = domain_mapping.get(instance)  # type: ignore[attr-defined]
+    if service_data is None:
+        raise TypeError(f"Instance '{instance}' not found in domain '{entity.domain}'")
+
+    # Check if the service_data is a tuple and process it accordingly
+    if isinstance(service_data, tuple):
+        service, attr, valid_modes = service_data
+
+        if not isinstance(valid_modes, list):
+            raise TypeError(f"Expected a list of valid modes, got {type(valid_modes)}")
+
+        if mode_split not in valid_modes:
+            raise AlexaInvalidValueError(
+                f"Entity '{entity.entity_id}' does not support Mode '{mode_split}'"
+            )
+
+        data[attr] = mode_split
+        return service, data
+
+    # If service_data is not a tuple, return it directly
+    return service_data, data
+
+
+def determine_cover_service(position: str) -> str | None:
+    """Determine the appropriate cover service based on the cover's position."""
+    if position == cover.STATE_CLOSED:
+        return cover.SERVICE_CLOSE_COVER
+    if position == cover.STATE_OPEN:
+        return cover.SERVICE_OPEN_COVER
+    if position == "custom":
+        return cover.SERVICE_STOP_COVER
+    return None
+
+
+def determine_valve_service(position: str) -> str | None:
+    """Determine the appropriate valve service based on the valve's position."""
+    if position == valve.STATE_CLOSED:
+        return valve.SERVICE_CLOSE_VALVE
+    if position == valve.STATE_OPEN:
+        return valve.SERVICE_OPEN_VALVE
+    return None
 
 
 @HANDLERS.register(("Alexa.ModeController", "AdjustMode"))
