@@ -1,3 +1,6 @@
+# SonarQube Scanner work
+.scannerwork/
+
 /config
 config2/*
 
@@ -136,3 +139,4 @@ tmp_cache
 
 # Will be created from script/split_tests.py
 pytest_buckets.txt
+
