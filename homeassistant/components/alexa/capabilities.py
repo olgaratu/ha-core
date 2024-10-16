@@ -1417,76 +1417,101 @@ class AlexaModeController(AlexaCapability):
         """Return True if properties can be retrieved."""
         return True
 
-    def get_property(self, name: str) -> Any:
-        """Read and return a property."""
-        if name != "mode":
-            raise UnsupportedProperty(name)
-
+    def get_fan_direction(self) -> Any:
         # Fan Direction
         if self.instance == f"{fan.DOMAIN}.{fan.ATTR_DIRECTION}":
             mode = self.entity.attributes.get(fan.ATTR_DIRECTION, None)
             if mode in (fan.DIRECTION_FORWARD, fan.DIRECTION_REVERSE, STATE_UNKNOWN):
                 return f"{fan.ATTR_DIRECTION}.{mode}"
+        return None
 
+    def get_fan_preset_mode(self) -> Any:
         # Fan preset_mode
         if self.instance == f"{fan.DOMAIN}.{fan.ATTR_PRESET_MODE}":
             mode = self.entity.attributes.get(fan.ATTR_PRESET_MODE, None)
             if mode in self.entity.attributes.get(fan.ATTR_PRESET_MODES, None):
                 return f"{fan.ATTR_PRESET_MODE}.{mode}"
+        return None
 
+    def get_humidifier_mode(self) -> Any:
         # Humidifier mode
         if self.instance == f"{humidifier.DOMAIN}.{humidifier.ATTR_MODE}":
             mode = self.entity.attributes.get(humidifier.ATTR_MODE)
             modes: list[str] = (
-                self.entity.attributes.get(humidifier.ATTR_AVAILABLE_MODES) or []
+                    self.entity.attributes.get(humidifier.ATTR_AVAILABLE_MODES) or []
             )
             if mode in modes:
                 return f"{humidifier.ATTR_MODE}.{mode}"
+        return None
 
+    def get_remote_activity(self) -> Any:
         # Remote Activity
         if self.instance == f"{remote.DOMAIN}.{remote.ATTR_ACTIVITY}":
             activity = self.entity.attributes.get(remote.ATTR_CURRENT_ACTIVITY, None)
             if activity in self.entity.attributes.get(remote.ATTR_ACTIVITY_LIST, []):
                 return f"{remote.ATTR_ACTIVITY}.{activity}"
+        return None
 
+    def get_water_heater_operation_mode(self) -> Any:
         # Water heater operation mode
         if self.instance == f"{water_heater.DOMAIN}.{water_heater.ATTR_OPERATION_MODE}":
-            operation_mode = self.entity.attributes.get(
-                water_heater.ATTR_OPERATION_MODE
-            )
+            operation_mode = self.entity.attributes.get(water_heater.ATTR_OPERATION_MODE)
             operation_modes: list[str] = (
-                self.entity.attributes.get(water_heater.ATTR_OPERATION_LIST) or []
+                    self.entity.attributes.get(water_heater.ATTR_OPERATION_LIST) or []
             )
             if operation_mode in operation_modes:
                 return f"{water_heater.ATTR_OPERATION_MODE}.{operation_mode}"
+        return None
 
+    def get_cover_position(self) -> Any:
         # Cover Position
         if self.instance == f"{cover.DOMAIN}.{cover.ATTR_POSITION}":
             # Return state instead of position when using ModeController.
             mode = self.entity.state
             if mode in (
-                cover.STATE_OPEN,
-                cover.STATE_OPENING,
-                cover.STATE_CLOSED,
-                cover.STATE_CLOSING,
-                STATE_UNKNOWN,
+                    cover.STATE_OPEN,
+                    cover.STATE_OPENING,
+                    cover.STATE_CLOSED,
+                    cover.STATE_CLOSING,
+                    STATE_UNKNOWN,
             ):
                 return f"{cover.ATTR_POSITION}.{mode}"
+        return None
 
+    def get_valve_position_state(self) -> Any:
         # Valve position state
         if self.instance == f"{valve.DOMAIN}.state":
             # Return state instead of position when using ModeController.
             state = self.entity.state
             if state in (
-                valve.STATE_OPEN,
-                valve.STATE_OPENING,
-                valve.STATE_CLOSED,
-                valve.STATE_CLOSING,
-                STATE_UNKNOWN,
+                    valve.STATE_OPEN,
+                    valve.STATE_OPENING,
+                    valve.STATE_CLOSED,
+                    valve.STATE_CLOSING,
+                    STATE_UNKNOWN,
             ):
                 return f"state.{state}"
-
         return None
+
+    def get_property(self, name: str) -> Any:
+        """Read and return a property."""
+        if name != "mode":
+            raise UnsupportedProperty(name)
+
+        if fan_direction := self.get_fan_direction():
+            return fan_direction
+        elif fan_preset_mode := self.get_fan_preset_mode():
+            return fan_preset_mode
+        elif humidifier_mode := self.get_humidifier_mode():
+            return humidifier_mode
+        elif remote_activity := self.get_remote_activity():
+            return remote_activity
+        elif water_heater_operation_mode := self.get_water_heater_operation_mode():
+            return water_heater_operation_mode
+        elif cover_position := self.get_cover_position():
+            return cover_position
+        else:
+            return self.get_valve_position_state()
 
     def configuration(self) -> dict[str, Any] | None:
         """Return configuration with modeResources."""
